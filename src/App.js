@@ -6,6 +6,7 @@ import {
   createConnector,
   convertWeiToEth,
   checkNumber,
+  checkAddress,
 } from './utils';
 
 const { Header, Content } = Layout;
@@ -14,7 +15,6 @@ const UPDATE_TIME = 5000;
 
 const initWaletState = {
   connected: false,
-  chainId: '',
   accounts: [],
   address: '',
   addressTo: '',
@@ -33,6 +33,7 @@ export default function App() {
     console.log(walletState);
     handleWalletState({
       ...walletState,
+      erorrTransaction: '',
       [field]: value,
     });
   };
@@ -51,16 +52,28 @@ export default function App() {
       console.log(connector);
       await connector.createSession();
     } else {
-      handleWalletState({
-        ...walletState,
-        connected: true,
-        chainId: connector.chainId,
-        accounts: connector.accounts,
-        address: connector.accounts[0],
-      });
+      addDataWallet(connector.accounts);
     }
 
     setEvents(connector);
+  };
+
+  const addDataWallet = (accounts) => {
+    const address = checkAddress(accounts[0]);
+
+    if (address) {
+      handleWalletState({
+        ...walletState,
+        connected: true,
+        accounts,
+        address,
+      });
+    } else {
+      handleWalletState({
+        ...walletState,
+        erorrTransaction: 'Address not valid',
+      });
+    }
   };
 
   const setEvents = (connect) => {
@@ -82,24 +95,25 @@ export default function App() {
   };
 
   const connectOn = (params) => {
-    console.log(walletState);
-    const { accounts, chainId } = params;
-    handleWalletState({
-      ...walletState,
-      connected: true,
-      chainId,
-      accounts,
-      address: accounts[0],
-    });
+    const { accounts } = params;
+    addDataWallet(accounts);
   };
 
   const sendTransaction = async () => {
+    const validAddressTo = checkAddress(walletState.addressTo);
+
+    if (!validAddressTo)
+      return handleWalletState({
+        ...walletState,
+        erorrTransaction: 'Address not valid',
+      });
+
     const hexValue = (+walletState.amountEth).toString(16);
     const gasPrice = await apiGetGasPrices();
 
     const tx = {
       from: walletState.address,
-      to: walletState.addressTo,
+      to: validAddressTo,
       data: '0x',
       gasPrice,
       gas: '0x9c40',
@@ -110,6 +124,7 @@ export default function App() {
     connector
       .sendTransaction(tx)
       .then((result) => {
+        console.log(result);
         handleWalletState({
           ...walletState,
           hashTransaction: result,
@@ -117,11 +132,10 @@ export default function App() {
           amountEth: '',
           addressTo: '',
         });
-        console.log(result);
       })
       .catch((error) => {
-        changeWalletState('erorrTransaction', error);
         console.error(error);
+        // changeWalletState('erorrTransaction', error);
       });
   };
 
@@ -131,20 +145,19 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (walletState.address && walletState.chainId && ref) {
+    if (walletState.address && ref) {
       ref.current = setTimeout(async function tick() {
         try {
-          console.log('send api');
           const result = await apiGetAccountAssets(walletState.address);
           handleBalance(convertWeiToEth(result));
         } catch (error) {
           console.log(error);
         }
 
-        ref.current = setTimeout(tick, UPDATE_TIME); // (*)
+        ref.current = setTimeout(tick, UPDATE_TIME);
       }, 100);
     }
-  }, [walletState.address, walletState.chainId, ref]);
+  }, [walletState.address, ref]);
 
   useEffect(() => {
     return () => {
@@ -152,7 +165,6 @@ export default function App() {
     };
   }, []);
 
-  console.log(connector);
   return (
     <Layout>
       <Header style={{ height: 100 }}></Header>
