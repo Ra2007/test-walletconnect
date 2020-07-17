@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Layout, Row, Col, Typography, Input, Card } from 'antd';
-import {
-  apiGetAccountAssets,
-  apiGetGasPrices,
-  createConnector,
-  convertWeiToEth,
-  checkNumber,
-  checkAddress,
-} from './utils';
+import { Button, Layout, Row, Col, Typography, Input, Card, Spin } from 'antd';
+import { createConnector, checkNumber, checkAddress } from './utils';
+import Web3 from 'web3';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
+
 const UPDATE_TIME = 5000;
+const API_KEY = '57e4a16cfc0e46d9aa036d2d0b5dbdba';
 
 const initWaletState = {
   connected: false,
@@ -21,19 +17,20 @@ const initWaletState = {
   amountEth: '',
   erorrTransaction: '',
   hashTransaction: '',
+  disabledButton: false,
 };
 
+const web3 = new Web3(`https://ropsten.infura.io/v3/${API_KEY}`);
+
 export default function App() {
+  const ref = useRef(false);
   const [walletState, handleWalletState] = useState(initWaletState);
   const [balance, handleBalance] = useState(0);
-  const ref = useRef(false);
   const [connector, setConnector] = useState(createConnector());
 
   const changeWalletState = (field, value) => {
-    console.log(walletState);
     handleWalletState({
       ...walletState,
-      erorrTransaction: '',
       [field]: value,
     });
   };
@@ -49,7 +46,6 @@ export default function App() {
     if (!connector) return createNewConnector();
 
     if (!connector.connected) {
-      console.log(connector);
       await connector.createSession();
     } else {
       addDataWallet(connector.accounts);
@@ -69,10 +65,7 @@ export default function App() {
         address,
       });
     } else {
-      handleWalletState({
-        ...walletState,
-        erorrTransaction: 'Address not valid',
-      });
+      changeWalletState('erorrTransaction', 'Address not valid');
     }
   };
 
@@ -88,7 +81,7 @@ export default function App() {
       if (error) {
         throw error;
       }
-      console.log(payload);
+
       handleWalletState(initWaletState);
       setConnector(null);
     });
@@ -100,42 +93,49 @@ export default function App() {
   };
 
   const sendTransaction = async () => {
+    handleWalletState({
+      ...walletState,
+      erorrTransaction: '',
+      disabledButton: true,
+    });
     const validAddressTo = checkAddress(walletState.addressTo);
 
     if (!validAddressTo)
-      return handleWalletState({
-        ...walletState,
-        erorrTransaction: 'Address not valid',
-      });
+      return changeWalletState('erorrTransaction', 'Address not valid');
 
-    const hexValue = (+walletState.amountEth).toString(16);
-    const gasPrice = await apiGetGasPrices();
+    const amoutWei = web3.utils.toWei(walletState.amountEth);
+    const gasPriceWei = await web3.eth.getGasPrice();
+    const lastNonce = await web3.eth.getTransactionCount(walletState.address);
 
     const tx = {
       from: walletState.address,
       to: validAddressTo,
       data: '0x',
-      gasPrice,
-      gas: '0x9c40',
-      value: '0x' + hexValue,
-      nonce: '0x0114',
+      gasPrice: web3.utils.toHex(gasPriceWei),
+      gasLimit: web3.utils.toHex('21000'),
+      value: web3.utils.toHex(amoutWei),
+      nonce: web3.utils.toHex(lastNonce + 1),
     };
 
     connector
       .sendTransaction(tx)
       .then((result) => {
-        console.log(result);
         handleWalletState({
           ...walletState,
           hashTransaction: result,
           erorrTransaction: '',
+          disabledButton: false,
           amountEth: '',
           addressTo: '',
         });
       })
-      .catch((error) => {
-        console.error(error);
-        // changeWalletState('erorrTransaction', error);
+      .catch((err) => {
+        const error = new Error(err);
+        handleWalletState({
+          ...walletState,
+          erorrTransaction: error.message,
+          disabledButton: false,
+        });
       });
   };
 
@@ -148,8 +148,9 @@ export default function App() {
     if (walletState.address && ref) {
       ref.current = setTimeout(async function tick() {
         try {
-          const result = await apiGetAccountAssets(walletState.address);
-          handleBalance(convertWeiToEth(result));
+          const balance = await web3.eth.getBalance(walletState.address);
+
+          handleBalance(web3.utils.fromWei(balance));
         } catch (error) {
           console.log(error);
         }
@@ -227,15 +228,22 @@ export default function App() {
 
                   <Button
                     onClick={() => sendTransaction()}
-                    disabled={!(walletState.amountEth && walletState.addressTo)}
+                    disabled={
+                      !(walletState.amountEth && walletState.addressTo) ||
+                      walletState.disabledButton
+                    }
+                    style={{ width: 150 }}
                   >
-                    Send transaction
+                    {walletState.disabledButton ? (
+                      <Spin size='small' />
+                    ) : (
+                      'Send transaction'
+                    )}
                   </Button>
                   <Row style={{ marginTop: 20 }}>
                     {walletState.erorrTransaction && (
                       <Text type='danger'>{walletState.erorrTransaction}</Text>
                     )}
-
                     {walletState.hashTransaction && (
                       <Text>{`Hash transaction: ${walletState.hashTransaction}`}</Text>
                     )}
